@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: pit-wall
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PITWALL_CORS_ALLOW_CREDENTIALS
+        value: "false"
