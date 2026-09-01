@@ -345,7 +345,7 @@ input {
 }
 
 .webmcpStatus {
-  min-width: 150px;
+  min-width: 188px;
   min-height: 58px;
   padding: 9px 11px;
   display: grid;
@@ -422,6 +422,87 @@ input {
 .controlStatePanel.aiMode {
   border-color: #554929;
   background: #1c1a13;
+}
+
+.pitBoxPanel,
+.stageCompletePanel {
+  margin-top: 14px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid #303b35;
+  background: #151917;
+  border-radius: 6px;
+}
+
+.pitBoxPanel {
+  grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+.pitBoxPanel h2,
+.stageCompletePanel h2 {
+  margin-top: 3px;
+  text-transform: uppercase;
+}
+
+.pitBoxCounts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pitBoxCounts > div {
+  min-width: 136px;
+  min-height: 54px;
+  padding: 8px 10px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  border: 1px solid #3c493f;
+  border-radius: 4px;
+  background: #191d1a;
+}
+
+.pitBoxCounts span,
+.stageTopFive span {
+  color: #aeb9b1;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.pitBoxCounts strong,
+.stageCompletePanel strong {
+  color: #ffffff;
+  text-transform: uppercase;
+}
+
+.stageCompletePanel {
+  grid-template-columns: minmax(220px, 1fr) 120px minmax(260px, 1.1fr);
+  border-color: #5da6c7;
+  background: #141d20;
+}
+
+.stageCompletePanel h2 {
+  color: #e9f7ff;
+}
+
+.stageTopFive {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.stageTopFive span {
+  min-height: 42px;
+  padding: 7px;
+  display: grid;
+  align-content: center;
+  border: 1px solid #38515d;
+  border-radius: 4px;
+  background: #102025;
+  overflow-wrap: anywhere;
 }
 
 .controlStatePanel h2 {
@@ -999,7 +1080,7 @@ input {
 .decisionHistoryMini > div {
   min-height: 34px;
   display: grid;
-  grid-template-columns: 42px 98px 1fr;
+  grid-template-columns: 42px 98px 1fr 74px;
   gap: 8px;
   align-items: center;
   padding: 6px;
@@ -1023,6 +1104,11 @@ input {
 .decisionHistoryMini p {
   color: #d5ddd2;
   overflow-wrap: anywhere;
+}
+
+.decisionHistoryMini small {
+  color: #aeb9b1;
+  font-size: 11px;
 }
 
 .sessionBar {
@@ -1105,6 +1191,38 @@ input {
   color: #c4cec5;
 }
 
+.stageResultsList {
+  display: grid;
+  gap: 8px;
+}
+
+.stageResultsList > div {
+  min-height: 64px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 96px 1fr 92px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #303b35;
+  border-radius: 4px;
+  background: #191d1a;
+}
+
+.stageResultsList span {
+  color: #d1a545;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.stageResultsList strong {
+  color: #ffffff;
+}
+
+.stageResultsList p {
+  color: #d5ddd2;
+  font-weight: 900;
+}
+
 .decisionList {
   margin-top: 12px;
   display: grid;
@@ -1159,6 +1277,14 @@ input {
       "order order"
       "timeline timeline";
   }
+
+  .stageCompletePanel {
+    grid-template-columns: 1fr;
+  }
+
+  .stageTopFive {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -1177,6 +1303,7 @@ input {
   .trackSelector,
   .raceCommand,
   .controlStatePanel,
+  .pitBoxPanel,
   .storyGrid,
   .workstation,
   .finishGrid {
@@ -1184,6 +1311,10 @@ input {
   }
 
   .controlStateActions {
+    justify-content: flex-start;
+  }
+
+  .pitBoxCounts {
     justify-content: flex-start;
   }
 
@@ -1226,8 +1357,13 @@ input {
 
   .decisionList p,
   .decisionList small,
-  .decisionHistoryMini p {
+  .decisionHistoryMini p,
+  .decisionHistoryMini small {
     grid-column: 2;
+  }
+
+  .stageResultsList > div {
+    grid-template-columns: 1fr;
   }
 
   .contextGrid {

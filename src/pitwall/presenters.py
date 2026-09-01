@@ -11,6 +11,8 @@ from src.pitwall.schemas import (
     RaceResultResponse,
     RaceStateResponse,
     RecentRunAnalysisResponse,
+    StageResultResponse,
+    StageRunningOrderEntryResponse,
     StrategyActionCountResponse,
 )
 from src.simulation.models import CarState, RaceConfig, RaceEvent, RacePhase, RaceResult, StrategyAction, StrategyDecision
@@ -80,6 +82,7 @@ def recent_run_analysis(field: list[CarState], car: CarState, snapshots: list, b
 def race_state_response(session) -> RaceStateResponse:
     sim = session.simulation
     total_laps = int(sim.config.scheduled_laps.value)
+    current_stage = stage_for_lap(sim.config, sim.lap)
     return RaceStateResponse(
         session_id=session.session_id,
         track_id=sim.config.track.track_id,
@@ -89,7 +92,7 @@ def race_state_response(session) -> RaceStateResponse:
         race_laps=total_laps,
         lap=sim.lap,
         total_laps=total_laps,
-        stage=stage_for_lap(sim.config, sim.lap),
+        stage=current_stage,
         race_status=sim.phase.value,
         caution_status="NONE" if sim.phase == RacePhase.GREEN else sim.phase.value,
         leader=leader_label(sim.field[0]),
@@ -100,6 +103,8 @@ def race_state_response(session) -> RaceStateResponse:
         current_controller=session.current_controller,
         delegation_status=session.delegation_status,
         objective=session.objective,
+        current_stage=current_stage,
+        completed_stages=stage_result_responses(session),
     )
 
 
@@ -229,6 +234,34 @@ def full_field_response(session, debug: bool = False) -> tuple[FieldCarResponse,
     return tuple(_field_car_response(car, leader, debug) for car in sim.field)
 
 
+def stage_result_responses(session) -> tuple[StageResultResponse, ...]:
+    sim = session.simulation
+    cars_by_id = {car.car_id: car for car in sim.field}
+    rows = []
+    for stage in sim.stage_results:
+        winner = cars_by_id[stage.winner_car_id]
+        top_10 = tuple(
+            StageRunningOrderEntryResponse(
+                position=position,
+                car_number=cars_by_id[car_id].car_number,
+                driver_name=cars_by_id[car_id].driver.display_name,
+            )
+            for position, car_id in enumerate(stage.top_10, start=1)
+            if car_id in cars_by_id
+        )
+        rows.append(
+            StageResultResponse(
+                stage_number=stage.stage_number,
+                completion_lap=stage.completion_lap,
+                winner_car_number=winner.car_number,
+                winner_driver_name=winner.driver.display_name,
+                user_position=stage.user_position,
+                top_10=top_10,
+            )
+        )
+    return tuple(rows)
+
+
 def _field_car_response(car: CarState, leader: CarState, debug: bool) -> FieldCarResponse:
     return FieldCarResponse(
         position=car.position,
@@ -323,6 +356,7 @@ def race_result_response(session, result: RaceResult) -> RaceResultResponse:
         lead_laps=user.laps_led,
         cautions_survived=result.caution_count,
         strategy_decisions=tuple(session.decision_history),
+        stage_results=stage_result_responses(session),
         caution_count=result.caution_count,
         lead_changes=result.lead_changes,
         dnf_count=result.dnf_count,

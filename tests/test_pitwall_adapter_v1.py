@@ -277,8 +277,31 @@ def test_auto_play_finishes_through_adapter():
     assert fetched == result
     assert result.user_finish_position >= 1
     assert result.user_best_position >= 1
+    assert len(result.stage_results) == len(session.config.stage_ends)
+    assert result.stage_results[0].winner_car_number
+    assert result.stage_results[0].top_10[0].position == 1
     assert result.strategy_decisions
     assert all(entry.actor == "AUTO_POLICY" for entry in result.strategy_decisions)
+
+
+def test_race_state_exposes_completed_stage_results():
+    adapter = PitWallAdapter()
+    session = adapter.create_race(seed=1847)
+
+    while session.simulation.lap <= session.config.stage_ends[0]:
+        next_stop = adapter.advance_to_next_decision(session.session_id)
+        if isinstance(next_stop, RaceFinishedResponse):
+            break
+        adapter.auto_commit_current_decision(session.session_id)
+
+    state = adapter.get_race_state(session.session_id)
+
+    assert state.current_stage >= 2
+    assert len(state.completed_stages) >= 1
+    assert state.completed_stages[0].stage_number == 1
+    assert state.completed_stages[0].completion_lap == session.config.stage_ends[0]
+    assert state.completed_stages[0].winner_car_number
+    assert 1 <= state.completed_stages[0].user_position <= int(session.config.field_size.value)
 
 
 def test_repeated_advance_commit_progression_gets_multiple_decisions_and_finishes():

@@ -220,6 +220,16 @@ class RaceEvent:
 
 
 @dataclass(frozen=True)
+class StageResult:
+    stage_number: int
+    completion_lap: int
+    winner_car_id: str
+    user_position: int
+    top_10: tuple[str, ...]
+    provenance: Provenance = Provenance.SIMULATED
+
+
+@dataclass(frozen=True)
 class SimulationSnapshot:
     lap: int
     phase: RacePhase
@@ -246,5 +256,6 @@ class RaceResult:
     user_car_id: str
     user_start_position: int
     user_finish_position: int
+    stage_results: tuple[StageResult, ...]
     event_count: int
     provenance: Provenance = Provenance.SIMULATED

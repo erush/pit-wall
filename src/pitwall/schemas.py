@@ -22,6 +22,23 @@ class RecentRunAnalysisResponse:
 
 
 @dataclass(frozen=True)
+class StageRunningOrderEntryResponse:
+    position: int
+    car_number: str
+    driver_name: str
+
+
+@dataclass(frozen=True)
+class StageResultResponse:
+    stage_number: int
+    completion_lap: int
+    winner_car_number: str
+    winner_driver_name: str
+    user_position: int
+    top_10: tuple[StageRunningOrderEntryResponse, ...]
+
+
+@dataclass(frozen=True)
 class RaceStateResponse:
     session_id: str
     track_id: str
@@ -42,6 +59,8 @@ class RaceStateResponse:
     current_controller: str
     delegation_status: str
     objective: str
+    current_stage: int
+    completed_stages: tuple[StageResultResponse, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -192,6 +211,7 @@ class RaceResultResponse:
     lead_laps: int
     cautions_survived: int
     strategy_decisions: tuple[DecisionHistoryEntry, ...]
+    stage_results: tuple[StageResultResponse, ...]
     caution_count: int
     lead_changes: int
     dnf_count: int

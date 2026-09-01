@@ -16,6 +16,7 @@ from src.simulation.models import (
     RacePhase,
     RaceResult,
     SimulationSnapshot,
+    StageResult,
     StrategyAction,
     StrategyDecision,
 )
@@ -42,6 +43,7 @@ class RaceSimulation:
         self.pending_decision: StrategyDecision | None = None
         self.last_human_decision_lap = -999
         self.stage_break_laps = set(config.stage_ends)
+        self.stage_results: list[StageResult] = []
 
     @property
     def user_car(self) -> CarState:
@@ -96,9 +98,24 @@ class RaceSimulation:
 
     def _advance_one_lap(self, user_action: StrategyAction | None) -> None:
         if self.lap in self.stage_break_laps and self.phase == RacePhase.GREEN:
+            stage_result = self._record_stage_result()
             self.phase = RacePhase.STAGE_BREAK
             self.caution_remaining = int(self.config.caution_laps.value)
-            self.events.append(RaceEvent("StageEnded", self.lap, f"Stage ended at lap {self.lap}."))
+            self.events.append(
+                RaceEvent(
+                    "StageEnded",
+                    self.lap,
+                    (
+                        f"Stage {stage_result.stage_number} complete. Winner {stage_result.winner_car_id}. "
+                        f"You finished P{stage_result.user_position}."
+                    ),
+                    stage_result.winner_car_id,
+                    {
+                        "stage_number": stage_result.stage_number,
+                        "user_position": stage_result.user_position,
+                    },
+                )
+            )
             self._bunch_field()
 
         self._apply_strategy(user_action)
@@ -271,6 +288,22 @@ class RaceSimulation:
             )
         )
 
+    def _record_stage_result(self) -> StageResult:
+        existing = next((result for result in self.stage_results if result.completion_lap == self.lap), None)
+        if existing is not None:
+            return existing
+        self._sort_order()
+        stage_number = self.config.stage_ends.index(self.lap) + 1
+        result = StageResult(
+            stage_number=stage_number,
+            completion_lap=self.lap,
+            winner_car_id=self.field[0].car_id,
+            user_position=self.user_car.position,
+            top_10=tuple(car.car_id for car in self.field[:10]),
+        )
+        self.stage_results.append(result)
+        return result
+
     def _recent_pitters(self, laps: int) -> int:
         return sum(1 for pit_lap in self.recent_pit_laps if self.lap - laps <= pit_lap <= self.lap)
 
@@ -343,6 +376,7 @@ class RaceSimulation:
             user_car_id=user.car_id,
             user_start_position=user.start_position,
             user_finish_position=user.position,
+            stage_results=tuple(self.stage_results),
             event_count=len(self.events),
         )
 
@@ -367,6 +401,7 @@ class RaceSimulation:
                 for c in self.field
             ],
             "events": [asdict(e) for e in self.events],
+            "stage_results": [asdict(stage) for stage in self.stage_results],
             "snapshots": [asdict(s) for s in self.snapshots[:: max(1, len(self.snapshots) // 50)]],
         }
         path.write_text(json.dumps(payload, indent=2, default=lambda value: value.value if hasattr(value, "value") else str(value)))

@@ -387,6 +387,7 @@ function RaceScreen({ session, race, car, field, decision, events, history, busy
   const pace = formatPace(car?.recent_run?.last_5_lap_relative_pace);
   const racePhase = dominantRacePhase(race);
   const humanCanAct = canHumanMutate(race);
+  const latestStage = race?.completed_stages?.at(-1);
 
   return (
     <main className="raceShell">
@@ -421,6 +422,8 @@ function RaceScreen({ session, race, car, field, decision, events, history, busy
       </section>
 
       <ControlStatePanel race={race} decision={decision} busy={busy} control={control} />
+      <PitBoxParticipation race={race} history={history} />
+      <StageCompletePanel stage={latestStage} race={race} />
 
       <section className="workstation">
         <section className="carPanel">
@@ -612,6 +615,10 @@ function PostRace({ result, events, history, restart }) {
         )}
       </section>
       <section className="recap">
+        <h2>Stage Results</h2>
+        <StageResultsList stages={result.stage_results} />
+      </section>
+      <section className="recap">
         <h2>Major Events</h2>
         <div className="eventFeed">
           {major.map((event) => (
@@ -670,18 +677,76 @@ function ControlStatePanel({ race, decision, busy, control }) {
 }
 
 function WebMCPStatus({ status, history = [], race }) {
-  const active = Boolean(
-    race?.delegation_status === "ACTIVE" ||
-    status.lastAction ||
-    history.some((entry) => entry.actor === "WEBMCP_AGENT")
-  );
-  const label = active ? "ACTIVE" : status.ready ? "READY" : "SITE TOOLS UNAVAILABLE";
+  const aiCalls = agentCallCount(history);
+  const active = Boolean(race?.delegation_status === "ACTIVE" || aiCalls > 0);
   return (
     <div className={`webmcpStatus ${status.ready ? "ready" : ""} ${active ? "active" : ""}`} title={status.message}>
       <Sparkles size={16} />
-      <span>AI Crew Chief</span>
-      <strong>{label}</strong>
-      {status.lastAction && <small>AI call: {status.lastAction}</small>}
+      <span>{status.ready ? "Agent Tools" : "Site Tools"}</span>
+      <strong>{status.ready ? (active ? "ACTIVE" : "AVAILABLE") : "UNAVAILABLE"}</strong>
+      <small>{status.ready ? (active ? "ChatGPT AI Crew Chief" : "ChatGPT Ready To Join Pit Box") : "Site Tools Unavailable"}</small>
+      {active && <small>{aiCalls} {aiCalls === 1 ? "call" : "calls"} this race</small>}
+    </div>
+  );
+}
+
+function PitBoxParticipation({ race, history }) {
+  if (race?.control_mode !== "CO_CREW_CHIEF") return null;
+  const humanCalls = history.filter((entry) => entry.actor === "HUMAN").length;
+  const aiCalls = agentCallCount(history);
+  return (
+    <section className="pitBoxPanel">
+      <div>
+        <p className="label">Pit Box</p>
+        <h2>Shared Participation</h2>
+      </div>
+      <div className="pitBoxCounts">
+        <div>
+          <span>Human</span>
+          <strong>{humanCalls} {humanCalls === 1 ? "Call" : "Calls"}</strong>
+        </div>
+        <div>
+          <span>AI Crew Chief</span>
+          <strong>{aiCalls} {aiCalls === 1 ? "Call" : "Calls"}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StageCompletePanel({ stage, race }) {
+  if (!stage || race?.race_status !== "STAGE_BREAK") return null;
+  return (
+    <section className="stageCompletePanel">
+      <div>
+        <p className="label">Stage {stage.stage_number} Complete</p>
+        <h2>Winner</h2>
+        <strong>#{stage.winner_car_number} {stage.winner_driver_name}</strong>
+      </div>
+      <div>
+        <p className="label">Your Result</p>
+        <h2>P{stage.user_position}</h2>
+      </div>
+      <div className="stageTopFive">
+        {stage.top_10.slice(0, 5).map((entry) => (
+          <span key={`${stage.stage_number}-${entry.position}`}>P{entry.position} #{entry.car_number} {entry.driver_name}</span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StageResultsList({ stages = [] }) {
+  if (!stages.length) return <p className="timelineEmpty">No completed stages recorded.</p>;
+  return (
+    <div className="stageResultsList">
+      {stages.map((stage) => (
+        <div key={stage.stage_number}>
+          <span>Stage {stage.stage_number}</span>
+          <strong>Winner: #{stage.winner_car_number} {stage.winner_driver_name}</strong>
+          <p>You: P{stage.user_position}</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -718,6 +783,7 @@ function DecisionHistory({ history }) {
           <span>L{entry.lap}</span>
           <strong>{actorLabel(entry.actor)}</strong>
           <p>{actionName(entry)}</p>
+          <small>P{entry.position_before} to P{entry.position_after_commit}</small>
         </div>
       ))}
     </div>
@@ -816,6 +882,7 @@ function eventText(event) {
     return `${actorLabel(event.actor)} chose ${cleanAction(event.message)}`;
   }
   if (event.event_type === "ControlTransferred") return event.message;
+  if (event.event_type === "StageEnded") return event.message;
   if (event.event_type === "PitStopCompleted") return `${car}pits: ${cleanAction(event.message)}`;
   if (event.event_type === "StrategyDecisionCommitted") {
     return `${actorLabel(event.actor)} chose ${cleanAction(event.message)}`;
@@ -953,6 +1020,10 @@ function actorLabel(actor) {
   if (actor === "AUTO_POLICY") return "AUTO POLICY";
   if (actor === "WEBMCP_AGENT") return "AI CREW CHIEF";
   return "HUMAN";
+}
+
+function agentCallCount(history = []) {
+  return history.filter((entry) => entry.actor === "WEBMCP_AGENT").length;
 }
 
 function actionName(entry) {
