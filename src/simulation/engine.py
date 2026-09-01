@@ -44,6 +44,7 @@ class RaceSimulation:
         self.last_human_decision_lap = -999
         self.stage_break_laps = set(config.stage_ends)
         self.stage_results: list[StageResult] = []
+        self.stage_break_decision_stages: set[int] = set()
 
     @property
     def user_car(self) -> CarState:
@@ -97,7 +98,7 @@ class RaceSimulation:
         return self.result()
 
     def _advance_one_lap(self, user_action: StrategyAction | None) -> None:
-        if self.lap in self.stage_break_laps and self.phase == RacePhase.GREEN:
+        if self.lap in self.stage_break_laps and not self._stage_result_recorded_for_lap(self.lap):
             stage_result = self._record_stage_result()
             self.phase = RacePhase.STAGE_BREAK
             self.caution_remaining = int(self.config.caution_laps.value)
@@ -288,6 +289,9 @@ class RaceSimulation:
             )
         )
 
+    def _stage_result_recorded_for_lap(self, lap: int) -> bool:
+        return any(result.completion_lap == lap for result in self.stage_results)
+
     def _record_stage_result(self) -> StageResult:
         existing = next((result for result in self.stage_results if result.completion_lap == self.lap), None)
         if existing is not None:
@@ -310,6 +314,9 @@ class RaceSimulation:
     def _human_decision_needed(self) -> bool:
         if self.phase == RacePhase.FINISHED or self.pending_decision is not None:
             return False
+        if self.phase == RacePhase.STAGE_BREAK:
+            latest_stage = self.stage_results[-1].stage_number if self.stage_results else None
+            return latest_stage is not None and latest_stage not in self.stage_break_decision_stages
         if self.lap - self.last_human_decision_lap < 8:
             return False
         car = self.user_car
@@ -320,10 +327,14 @@ class RaceSimulation:
         tire_delta = car.tire.age_laps >= int(self.config.baseline_tire_life_laps.value) * 0.70
         strategy_split = self._recent_pitters(3) >= 5
         late_caution = self.phase in {RacePhase.CAUTION, RacePhase.STAGE_BREAK} and laps_remaining <= 45
-        return self.phase in {RacePhase.CAUTION, RacePhase.STAGE_BREAK} or in_fuel_window or tire_delta or strategy_split or stage_soon or late_caution
+        return self.phase == RacePhase.CAUTION or in_fuel_window or tire_delta or strategy_split or stage_soon or late_caution
 
     def _build_decision(self) -> StrategyDecision:
         car = self.user_car
+        if self.phase == RacePhase.STAGE_BREAK:
+            latest_stage = self.stage_results[-1].stage_number if self.stage_results else None
+            if latest_stage is not None:
+                self.stage_break_decision_stages.add(latest_stage)
         laps_remaining = int(self.config.scheduled_laps.value) - self.lap
         recent_pitters = self._recent_pitters(3)
         lead_lap_old_tires = sum(1 for c in self.field[: len(self.field)] if c.tire.age_laps >= car.tire.age_laps + 8)

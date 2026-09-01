@@ -28,6 +28,7 @@ def test_webmcp_tool_surface_and_narrow_mutation_schema():
 
     for tool_name in expected_tools:
         assert f'name: "{tool_name}"' in source
+    assert source.count('name: "') == len(expected_tools)
 
     assert 'required: ["decision_id", "action"]' in source
     assert "enum: STRATEGY_ACTIONS" in source
@@ -37,6 +38,8 @@ def test_webmcp_tool_surface_and_narrow_mutation_schema():
     assert "track_id" in source
     assert "track_name" in source
     assert "race_laps" in source
+    assert "race_intelligence" in source
+    assert "fuel-to-boundary" in source
     assert "control-ownership" in source
     assert "next_action_expected" in source
     assert "first valid mutation activates exclusive AI Crew Chief ownership" in source

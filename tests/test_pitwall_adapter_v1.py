@@ -1,3 +1,5 @@
+from dataclasses import asdict
+
 from src.pitwall import PitWallAdapter, RaceFinishedResponse
 
 
@@ -302,6 +304,88 @@ def test_race_state_exposes_completed_stage_results():
     assert state.completed_stages[0].completion_lap == session.config.stage_ends[0]
     assert state.completed_stages[0].winner_car_number
     assert 1 <= state.completed_stages[0].user_position <= int(session.config.field_size.value)
+
+
+def test_darlington_stage_results_and_stage_break_decisions_are_preserved():
+    adapter = PitWallAdapter()
+    session = adapter.create_race(seed=1847, track_id="trk_darlington_raceway")
+    stage_break_decisions = []
+
+    while True:
+        next_stop = adapter.advance_to_next_decision(session.session_id)
+        state = adapter.get_race_state(session.session_id)
+        if state.race_status == "STAGE_BREAK":
+            stage_break_decisions.append((next_stop.lap, tuple(stage.stage_number for stage in state.completed_stages)))
+        if isinstance(next_stop, RaceFinishedResponse):
+            result = next_stop.result
+            break
+        commit = adapter.auto_commit_current_decision(session.session_id)
+        assert commit.accepted
+
+    stages = result.stage_results
+    stage_events = [event for event in session.simulation.events if event.event_type == "StageEnded"]
+
+    assert stage_break_decisions == [(116, (1,)), (231, (1, 2))]
+    assert [stage.stage_number for stage in stages] == [1, 2]
+    assert [stage.completion_lap for stage in stages] == [115, 230]
+    assert len({stage.stage_number for stage in stages}) == 2
+    assert all(stage.winner_car_number for stage in stages)
+    assert all(1 <= stage.user_position <= int(session.config.field_size.value) for stage in stages)
+    assert len(stage_events) == 2
+    assert "Stage 1 complete" in stage_events[0].message
+    assert "Stage 2 complete" in stage_events[1].message
+
+
+def test_race_intelligence_context_is_deterministic_read_only_and_observable():
+    adapter = PitWallAdapter()
+    session = adapter.create_race(seed=1847, track_id="trk_darlington_raceway")
+    decision = adapter.advance_to_next_decision(session.session_id)
+    action = next(option.action for option in decision.available_actions if option.eligible)
+    committed = adapter.commit_strategy(session.session_id, action, decision_id=decision.decision_id, actor="HUMAN")
+    assert committed.accepted
+
+    lap_before = session.simulation.lap
+    event_count_before = len(session.simulation.events)
+    history_count_before = len(session.decision_history)
+    first = adapter.get_race_state(session.session_id).race_intelligence
+    second = adapter.get_race_state(session.session_id).race_intelligence
+
+    assert first == second
+    assert session.simulation.lap == lap_before
+    assert len(session.simulation.events) == event_count_before
+    assert len(session.decision_history) == history_count_before
+    assert first.tire_context.user_tire_age == session.simulation.user_car.tire.age_laps
+    assert first.tire_context.relative_classification in {"FRESHER_THAN_FIELD", "NEAR_FIELD_MEDIAN", "OLDER_THAN_FIELD"}
+    assert 0 <= first.tire_context.approximate_percentile <= 100
+    assert first.fuel_context.laps_to_next_boundary == first.fuel_context.next_boundary_lap - session.simulation.lap
+    assert first.fuel_context.fuel_margin_to_boundary == round(
+        first.fuel_context.fuel_laps_remaining - first.fuel_context.laps_to_next_boundary,
+        1,
+    )
+    assert first.position_context.current_position == session.simulation.user_car.position
+    assert first.position_context.track_position_classification in {"FRONT", "MIDFIELD", "REAR"}
+    assert first.position_context.recent_position_trend in {"GAINING", "STABLE", "LOSING"}
+    assert first.field_strategy_context.strategy_split_classification in {"LOW", "MEDIUM", "HIGH"}
+    assert first.field_strategy_context.not_yet_recorded_count >= 0
+    assert first.recent_strategy_consequence is not None
+    assert first.recent_strategy_consequence.lap == committed.decision.lap
+    assert first.recent_strategy_consequence.immediate_position_delta == (
+        committed.decision.position_before - committed.decision.position_after_commit
+    )
+    assert 3 <= len(first.strategic_factors) <= 6
+    assert not any("should" in factor.lower() or "must pit" in factor.lower() or "optimal" in factor.lower() for factor in first.strategic_factors)
+    assert not any(policy in str(asdict(first)) for policy in ("CONSERVATIVE", "AGGRESSIVE", "STAGE_OPTIMIZER", "LONG_RUN_OPTIMIZER"))
+
+
+def test_fixed_seed_path_produces_identical_race_intelligence():
+    def context():
+        adapter = PitWallAdapter()
+        session = adapter.create_race(seed=1917, track_id="trk_pocono_raceway")
+        decision = adapter.advance_to_next_decision(session.session_id)
+        adapter.commit_strategy(session.session_id, "STAY_OUT", decision_id=decision.decision_id, actor="HUMAN")
+        return adapter.get_race_state(session.session_id).race_intelligence
+
+    assert context() == context()
 
 
 def test_repeated_advance_commit_progression_gets_multiple_decisions_and_finishes():

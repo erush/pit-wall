@@ -467,6 +467,7 @@ function RaceScreen({ session, race, car, field, decision, events, history, busy
 
         <section className="strategyPanel">
           <div className="panelTitle"><Wrench size={17} /> Strategy</div>
+          <RaceIntelligence intelligence={race?.race_intelligence} />
           <FieldStrategy fieldStrategy={field?.field_strategy} />
           {decision ? (
             <>
@@ -751,6 +752,31 @@ function StageResultsList({ stages = [] }) {
   );
 }
 
+function RaceIntelligence({ intelligence }) {
+  if (!intelligence) return null;
+  const fuel = intelligence.fuel_context;
+  const tires = intelligence.tire_context;
+  const position = intelligence.position_context;
+  const stage = intelligence.stage_context;
+  return (
+    <section className="raceIntelligence">
+      <div className="raceIntelHead">
+        <p className="label">Race Intelligence</p>
+        <strong>Deterministic Facts</strong>
+      </div>
+      <div className="raceIntelGrid">
+        <Metric label="Fuel To Boundary" value={`${signedDecimal(fuel.fuel_margin_to_boundary)} laps`} />
+        <Metric label="Tires Vs Field" value={intelLabel(tires.relative_classification)} />
+        <Metric label="Position Trend" value={intelLabel(position.recent_position_trend)} />
+        <Metric label="Stage" value={stage.laps_remaining_in_current_stage === null ? "Final" : `${stage.laps_remaining_in_current_stage} laps`} />
+      </div>
+      <div className="factorList">
+        {intelligence.strategic_factors.slice(0, 4).map((factor) => <p key={factor}>{factor}</p>)}
+      </div>
+    </section>
+  );
+}
+
 function LastCall({ history, car, events }) {
   const last = history.at(-1);
   if (!last || !car) return null;
@@ -1014,6 +1040,15 @@ function movementText(value) {
 
 function cleanAction(value) {
   return String(value).replace("auto:", "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function intelLabel(value) {
+  return cleanAction(value).replace("Than", "than");
+}
+
+function signedDecimal(value) {
+  if (typeof value !== "number") return value;
+  return value > 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
 }
 
 function actorLabel(actor) {

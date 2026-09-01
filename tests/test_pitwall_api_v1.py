@@ -21,6 +21,8 @@ def test_pitwall_session_creation_and_pre_race_state():
     assert payload["race"]["race_laps"] == 367
     assert payload["race"]["total_laps"] == 367
     assert payload["race"]["control_mode"] == "HUMAN"
+    assert payload["race"]["race_intelligence"]["fuel_context"]["next_boundary_lap"] == 115
+    assert payload["race"]["race_intelligence"]["stage_context"]["current_stage"] == 1
     assert payload["my_car"]["car_number"]
     assert payload["my_car"]["starting_position"] >= 1
 
@@ -170,6 +172,33 @@ def test_pitwall_race_completion_through_api():
     assert result["user_finish_position"] >= 1
     assert result["winner_driver_name"]
     assert result["strategy_decisions"]
+    assert len(result["stage_results"]) == 2
+
+
+def test_pitwall_api_state_exposes_race_intelligence_and_completed_stages():
+    client = TestClient(app)
+    session_id = client.post(
+        "/api/v1/nascar/pit-wall/races",
+        json={"seed": 1847, "track_id": "trk_darlington_raceway"},
+    ).json()["session_id"]
+
+    while True:
+        state = client.get(f"/api/v1/nascar/pit-wall/races/{session_id}/state").json()
+        if len(state["completed_stages"]) >= 1:
+            break
+        advanced = client.post(f"/api/v1/nascar/pit-wall/races/{session_id}/advance").json()
+        if advanced["status"] == "FINISHED":
+            break
+        committed = client.post(f"/api/v1/nascar/pit-wall/races/{session_id}/auto-strategy").json()
+        assert committed["accepted"] is True
+
+    intelligence = state["race_intelligence"]
+
+    assert state["completed_stages"][0]["stage_number"] == 1
+    assert intelligence["stage_context"]["completed_stage_results"][0]["stage_number"] == 1
+    assert intelligence["tire_context"]["relative_classification"] in {"FRESHER_THAN_FIELD", "NEAR_FIELD_MEDIAN", "OLDER_THAN_FIELD"}
+    assert "field_strategy_context" in intelligence
+    assert "recent_strategy_consequence" in intelligence
 
 
 def test_pitwall_unknown_session_returns_404():

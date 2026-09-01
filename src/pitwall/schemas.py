@@ -39,6 +39,85 @@ class StageResultResponse:
 
 
 @dataclass(frozen=True)
+class TireContextResponse:
+    user_tire_age: int
+    field_median_tire_age: float
+    user_tire_age_delta_to_median: float
+    relative_classification: str
+    approximate_percentile: int
+    recent_relative_pace_seconds: float | None
+
+
+@dataclass(frozen=True)
+class FuelContextResponse:
+    fuel_laps_remaining: float
+    laps_to_next_boundary: int
+    fuel_margin_to_boundary: float
+    can_reach_next_boundary: bool
+    next_boundary_type: str
+    next_boundary_lap: int
+
+
+@dataclass(frozen=True)
+class FieldStrategyContextResponse:
+    stay_out_count: int
+    four_tire_count: int
+    two_tire_count: int
+    fuel_only_count: int
+    extend_stint_count: int
+    save_fuel_count: int
+    not_yet_recorded_count: int
+    strategy_split_classification: str
+    recent_window_laps: int
+    leading_recorded_action: str | None
+
+
+@dataclass(frozen=True)
+class PositionContextResponse:
+    current_position: int
+    starting_position: int
+    net_positions_gained: int
+    net_positions_lost: int
+    recent_position_trend: str
+    track_position_classification: str
+
+
+@dataclass(frozen=True)
+class StageContextResponse:
+    current_stage: int
+    laps_remaining_in_current_stage: int | None
+    laps_to_next_boundary: int
+    next_boundary_type: str
+    completed_stage_results: tuple[StageResultResponse, ...]
+    latest_completed_stage: StageResultResponse | None
+    user_latest_stage_position: int | None
+    latest_stage_winner: str | None
+
+
+@dataclass(frozen=True)
+class RecentStrategyConsequenceResponse:
+    lap: int
+    actor: str
+    action: str
+    position_before: int
+    position_after_commit: int
+    current_position: int
+    immediate_position_delta: int
+    current_net_position_delta: int
+
+
+@dataclass(frozen=True)
+class RaceIntelligenceContextResponse:
+    tire_context: TireContextResponse
+    fuel_context: FuelContextResponse
+    field_strategy_context: FieldStrategyContextResponse
+    position_context: PositionContextResponse
+    stage_context: StageContextResponse
+    recent_strategy_consequence: RecentStrategyConsequenceResponse | None
+    strategic_factors: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RaceStateResponse:
     session_id: str
     track_id: str
@@ -61,6 +140,7 @@ class RaceStateResponse:
     objective: str
     current_stage: int
     completed_stages: tuple[StageResultResponse, ...] = field(default_factory=tuple)
+    race_intelligence: RaceIntelligenceContextResponse | None = None
 
 
 @dataclass(frozen=True)

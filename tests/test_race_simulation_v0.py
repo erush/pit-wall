@@ -111,9 +111,10 @@ def test_caution_and_stage_events_exist():
     event_types = {e.event_type for e in sim.events}
     assert "StageEnded" in event_types
     assert len(result.stage_results) == len(sim.config.stage_ends)
-    assert result.stage_results[0].completion_lap == sim.config.stage_ends[0]
-    assert result.stage_results[0].winner_car_id == result.stage_results[0].top_10[0]
-    assert 1 <= result.stage_results[0].user_position <= int(sim.config.field_size.value)
+    assert [stage.stage_number for stage in result.stage_results] == [1, 2]
+    assert [stage.completion_lap for stage in result.stage_results] == list(sim.config.stage_ends)
+    assert all(stage.winner_car_id == stage.top_10[0] for stage in result.stage_results)
+    assert all(1 <= stage.user_position <= int(sim.config.field_size.value) for stage in result.stage_results)
     assert result.caution_count >= 0
     assert "RaceFinished" in event_types
 

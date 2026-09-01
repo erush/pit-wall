@@ -8,12 +8,19 @@ from src.pitwall.schemas import (
     FieldCarResponse,
     FieldStateResponse,
     FieldStrategyResponse,
+    FieldStrategyContextResponse,
+    FuelContextResponse,
+    PositionContextResponse,
     RaceResultResponse,
     RaceStateResponse,
+    RaceIntelligenceContextResponse,
     RecentRunAnalysisResponse,
+    RecentStrategyConsequenceResponse,
+    StageContextResponse,
     StageResultResponse,
     StageRunningOrderEntryResponse,
     StrategyActionCountResponse,
+    TireContextResponse,
 )
 from src.simulation.models import CarState, RaceConfig, RaceEvent, RacePhase, RaceResult, StrategyAction, StrategyDecision
 
@@ -31,6 +38,13 @@ def laps_to_stage_end(config: RaceConfig, lap: int) -> int | None:
     if next_stage is None:
         return None
     return next_stage - lap
+
+
+def next_boundary(config: RaceConfig, lap: int) -> tuple[str, int]:
+    next_stage = min([stage_end for stage_end in config.stage_ends if stage_end > lap], default=None)
+    if next_stage is not None:
+        return "STAGE", next_stage
+    return "RACE_FINISH", int(config.scheduled_laps.value)
 
 
 def leader_label(car: CarState) -> str:
@@ -105,6 +119,7 @@ def race_state_response(session) -> RaceStateResponse:
         objective=session.objective,
         current_stage=current_stage,
         completed_stages=stage_result_responses(session),
+        race_intelligence=race_intelligence_context(session),
     )
 
 
@@ -212,6 +227,203 @@ def field_strategy_response(session, window_laps: int = 3) -> FieldStrategyRespo
         action_counts=action_counts,
         note=note,
     )
+
+
+def race_intelligence_context(session) -> RaceIntelligenceContextResponse:
+    sim = session.simulation
+    stage_results = stage_result_responses(session)
+    tire_context = _tire_context(session)
+    fuel_context = _fuel_context(session)
+    field_strategy_context = _field_strategy_context(session)
+    position_context = _position_context(session)
+    stage_context = _stage_context(session, stage_results, fuel_context)
+    recent_consequence = _recent_strategy_consequence(session)
+    return RaceIntelligenceContextResponse(
+        tire_context=tire_context,
+        fuel_context=fuel_context,
+        field_strategy_context=field_strategy_context,
+        position_context=position_context,
+        stage_context=stage_context,
+        recent_strategy_consequence=recent_consequence,
+        strategic_factors=_strategic_factors(
+            sim,
+            tire_context,
+            fuel_context,
+            field_strategy_context,
+            position_context,
+            stage_context,
+            recent_consequence,
+        ),
+    )
+
+
+def _median(values: list[int]) -> float:
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[midpoint])
+    return round((ordered[midpoint - 1] + ordered[midpoint]) / 2, 1)
+
+
+def _tire_context(session) -> TireContextResponse:
+    sim = session.simulation
+    user = sim.user_car
+    active_tire_ages = [car.tire.age_laps for car in sim.field if car.active]
+    median = _median(active_tire_ages) if active_tire_ages else float(user.tire.age_laps)
+    delta = round(user.tire.age_laps - median, 1)
+    if delta <= -3:
+        classification = "FRESHER_THAN_FIELD"
+    elif delta >= 3:
+        classification = "OLDER_THAN_FIELD"
+    else:
+        classification = "NEAR_FIELD_MEDIAN"
+    fresher_or_equal = sum(1 for age in active_tire_ages if age <= user.tire.age_laps)
+    percentile = round((fresher_or_equal / max(1, len(active_tire_ages))) * 100)
+    return TireContextResponse(
+        user_tire_age=user.tire.age_laps,
+        field_median_tire_age=median,
+        user_tire_age_delta_to_median=delta,
+        relative_classification=classification,
+        approximate_percentile=percentile,
+        recent_relative_pace_seconds=recent_run_analysis(sim.field, user, sim.snapshots, int(sim.config.baseline_tire_life_laps.value)).last_5_lap_relative_pace,
+    )
+
+
+def _fuel_context(session) -> FuelContextResponse:
+    sim = session.simulation
+    boundary_type, boundary_lap = next_boundary(sim.config, sim.lap)
+    laps_to_boundary = max(0, boundary_lap - sim.lap)
+    fuel = round(sim.user_car.fuel.remaining_laps, 2)
+    margin = round(fuel - laps_to_boundary, 1)
+    return FuelContextResponse(
+        fuel_laps_remaining=fuel,
+        laps_to_next_boundary=laps_to_boundary,
+        fuel_margin_to_boundary=margin,
+        can_reach_next_boundary=margin >= 0,
+        next_boundary_type=boundary_type,
+        next_boundary_lap=boundary_lap,
+    )
+
+
+def _field_strategy_context(session) -> FieldStrategyContextResponse:
+    field_strategy = field_strategy_response(session)
+    counts = {entry.action: entry.count for entry in field_strategy.action_counts}
+    leading = field_strategy.action_counts[0].action if field_strategy.action_counts else None
+    return FieldStrategyContextResponse(
+        stay_out_count=counts.get(StrategyAction.STAY_OUT.value, 0),
+        four_tire_count=counts.get(StrategyAction.PIT_4_TIRES.value, 0),
+        two_tire_count=counts.get(StrategyAction.PIT_2_TIRES.value, 0),
+        fuel_only_count=counts.get(StrategyAction.PIT_FUEL_ONLY.value, 0),
+        extend_stint_count=counts.get(StrategyAction.EXTEND_STINT.value, 0),
+        save_fuel_count=counts.get(StrategyAction.SAVE_FUEL.value, 0),
+        not_yet_recorded_count=field_strategy.unrecorded_count,
+        strategy_split_classification=field_strategy.split_level,
+        recent_window_laps=field_strategy.window_laps,
+        leading_recorded_action=leading,
+    )
+
+
+def _position_context(session) -> PositionContextResponse:
+    sim = session.simulation
+    user = sim.user_car
+    net = user.start_position - user.position
+    if len(sim.snapshots) >= 6:
+        recent_delta = sim.snapshots[-6].user_position - user.position
+    else:
+        recent_delta = net
+    if recent_delta >= 2:
+        trend = "GAINING"
+    elif recent_delta <= -2:
+        trend = "LOSING"
+    else:
+        trend = "STABLE"
+    field_size = len(sim.field)
+    if user.position <= max(1, field_size // 3):
+        classification = "FRONT"
+    elif user.position <= max(1, (field_size * 2) // 3):
+        classification = "MIDFIELD"
+    else:
+        classification = "REAR"
+    return PositionContextResponse(
+        current_position=user.position,
+        starting_position=user.start_position,
+        net_positions_gained=max(0, net),
+        net_positions_lost=max(0, -net),
+        recent_position_trend=trend,
+        track_position_classification=classification,
+    )
+
+
+def _stage_context(session, stage_results: tuple[StageResultResponse, ...], fuel_context: FuelContextResponse) -> StageContextResponse:
+    sim = session.simulation
+    current_stage = stage_for_lap(sim.config, sim.lap)
+    latest = stage_results[-1] if stage_results else None
+    return StageContextResponse(
+        current_stage=current_stage,
+        laps_remaining_in_current_stage=laps_to_stage_end(sim.config, sim.lap),
+        laps_to_next_boundary=fuel_context.laps_to_next_boundary,
+        next_boundary_type=fuel_context.next_boundary_type,
+        completed_stage_results=stage_results,
+        latest_completed_stage=latest,
+        user_latest_stage_position=latest.user_position if latest else None,
+        latest_stage_winner=f"#{latest.winner_car_number} {latest.winner_driver_name}" if latest else None,
+    )
+
+
+def _recent_strategy_consequence(session) -> RecentStrategyConsequenceResponse | None:
+    if not session.decision_history:
+        return None
+    latest = session.decision_history[-1]
+    current_position = session.simulation.user_car.position
+    return RecentStrategyConsequenceResponse(
+        lap=latest.lap,
+        actor=latest.actor,
+        action=latest.action,
+        position_before=latest.position_before,
+        position_after_commit=latest.position_after_commit,
+        current_position=current_position,
+        immediate_position_delta=latest.position_before - latest.position_after_commit,
+        current_net_position_delta=latest.position_before - current_position,
+    )
+
+
+def _strategic_factors(
+    sim,
+    tire_context: TireContextResponse,
+    fuel_context: FuelContextResponse,
+    field_strategy_context: FieldStrategyContextResponse,
+    position_context: PositionContextResponse,
+    stage_context: StageContextResponse,
+    recent_consequence: RecentStrategyConsequenceResponse | None,
+) -> tuple[str, ...]:
+    factors: list[str] = []
+    if fuel_context.fuel_margin_to_boundary < 0:
+        factors.append(f"Fuel is {abs(fuel_context.fuel_margin_to_boundary):.1f} laps short of the next boundary.")
+    else:
+        factors.append(f"Fuel margin to the next boundary is +{fuel_context.fuel_margin_to_boundary:.1f} laps.")
+    tire_label = tire_context.relative_classification.replace("_", " ").lower()
+    factors.append(f"Your tires are {tire_label} at {tire_context.user_tire_age} laps old.")
+    if field_strategy_context.leading_recorded_action:
+        label = ACTION_LABELS.get(field_strategy_context.leading_recorded_action, field_strategy_context.leading_recorded_action)
+        factors.append(f"Most recently recorded opponent calls favored {label}.")
+    else:
+        factors.append(f"No opponent strategy calls are recorded in the last {field_strategy_context.recent_window_laps} laps.")
+    net = position_context.net_positions_gained - position_context.net_positions_lost
+    if net > 0:
+        factors.append(f"You have gained {net} positions from the start.")
+    elif net < 0:
+        factors.append(f"You have lost {abs(net)} positions from the start.")
+    else:
+        factors.append("Your current position matches your starting position.")
+    if stage_context.next_boundary_type == "STAGE":
+        factors.append(f"Stage {stage_context.current_stage} ends in {stage_context.laps_to_next_boundary} laps.")
+    else:
+        factors.append(f"The race ends in {stage_context.laps_to_next_boundary} laps.")
+    if recent_consequence is not None:
+        factors.append(
+            f"Your last strategy call moved the car from P{recent_consequence.position_before} to P{recent_consequence.position_after_commit} immediately after commit."
+        )
+    return tuple(factors[:6])
 
 
 def field_state_response(session, window: int = 9, debug: bool = False) -> FieldStateResponse:
