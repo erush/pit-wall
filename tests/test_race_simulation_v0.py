@@ -81,6 +81,50 @@ def test_pit_stop_state_transitions():
     assert car.pit_stops[-1].provenance == Provenance.SIMULATED
 
 
+def test_pit_service_actions_have_distinct_resource_and_time_effects():
+    sim = build_sim(41)
+    car = sim.user_car
+    sim.start()
+
+    car.tire.age_laps = 30
+    car.fuel.remaining_laps = 2
+    sim._pit(car, StrategyAction.PIT_4_TIRES)
+    four_tire_loss = car.pit_stops[-1].total_loss_seconds
+
+    car.tire.age_laps = 30
+    car.fuel.remaining_laps = 2
+    sim._pit(car, StrategyAction.PIT_2_TIRES)
+    two_tire_loss = car.pit_stops[-1].total_loss_seconds
+
+    car.tire.age_laps = 6
+    car.fuel.remaining_laps = 2
+    sim._pit(car, StrategyAction.PIT_FUEL_ONLY)
+    fuel_only_loss = car.pit_stops[-1].total_loss_seconds
+
+    assert car.pit_stops[-3].action == StrategyAction.PIT_4_TIRES
+    assert car.pit_stops[-2].action == StrategyAction.PIT_2_TIRES
+    assert car.pit_stops[-1].action == StrategyAction.PIT_FUEL_ONLY
+    assert car.pit_stops[-3].positions_lost >= car.pit_stops[-2].positions_lost >= car.pit_stops[-1].positions_lost
+    assert four_tire_loss > two_tire_loss > fuel_only_loss
+    assert car.tire.age_laps == 6
+    assert car.fuel.remaining_laps == car.fuel.capacity_laps
+
+
+def test_fuel_save_reduces_burn_but_carries_pace_penalty():
+    normal = build_sim(42)
+    saving = build_sim(42)
+    normal.start()
+    saving.start()
+    normal_car = normal.user_car
+    saving_car = saving.user_car
+
+    normal._advance_one_lap(StrategyAction.NORMAL_PACE)
+    saving._advance_one_lap(StrategyAction.SAVE_FUEL)
+
+    assert saving_car.fuel.remaining_laps > normal_car.fuel.remaining_laps
+    assert saving_car.recent_lap_times[-1] > normal_car.recent_lap_times[-1]
+
+
 def test_strategy_eligibility_invalid_action_fails():
     sim = build_sim(50)
     sim.start()
@@ -125,3 +169,63 @@ def test_event_log_integrity():
     assert sim.events[0].event_type == "RaceStarted"
     assert sim.events[-1].event_type == "RaceFinished"
     assert all(e.provenance == Provenance.SIMULATED for e in sim.events)
+
+
+def test_pathological_strategy_policies_complete_without_state_corruption():
+    policies = {
+        "ALWAYS_STAY_OUT": (StrategyAction.STAY_OUT,),
+        "ALWAYS_PIT_4_TIRES": (
+            StrategyAction.PIT_4_TIRES,
+            StrategyAction.PIT_2_TIRES,
+            StrategyAction.PIT_FUEL_ONLY,
+            StrategyAction.STAY_OUT,
+            StrategyAction.NORMAL_PACE,
+        ),
+        "ALWAYS_SAVE_FUEL": (StrategyAction.SAVE_FUEL, StrategyAction.STAY_OUT, StrategyAction.NORMAL_PACE),
+        "ALWAYS_EXTEND": (StrategyAction.EXTEND_STINT, StrategyAction.STAY_OUT, StrategyAction.NORMAL_PACE),
+        "AGGRESSIVE_PIT": (
+            StrategyAction.PIT_4_TIRES,
+            StrategyAction.SHORT_PIT,
+            StrategyAction.PIT_2_TIRES,
+            StrategyAction.PIT_FUEL_ONLY,
+            StrategyAction.STAY_OUT,
+            StrategyAction.NORMAL_PACE,
+        ),
+    }
+
+    def choose(decision: StrategyDecision, preferences: tuple[StrategyAction, ...]) -> StrategyAction:
+        eligible = {option.action for option in decision.available_actions if option.eligible}
+        for action in preferences:
+            if action in eligible:
+                return action
+        raise AssertionError(f"No preferred action was eligible at lap {decision.lap}: {eligible}")
+
+    def run(track_id: str, preferences: tuple[StrategyAction, ...]):
+        config = default_race_config(seed=260901, track_id=track_id)
+        sim = RaceSimulation(config, generate_fictional_field(config))
+        decision_laps = []
+        for _ in range(1000):
+            next_stop = sim.advance_to_next_decision()
+            if isinstance(next_stop, RaceResult):
+                return sim, next_stop, tuple(decision_laps)
+            decision_laps.append(next_stop.lap)
+            sim.commit_user_decision(choose(next_stop, preferences))
+        raise AssertionError("Pathological policy did not finish within decision budget")
+
+    for track_id in TRACK_SIMULATION_PROFILES:
+        for preferences in policies.values():
+            first_sim, first_result, first_decisions = run(track_id, preferences)
+            second_sim, second_result, second_decisions = run(track_id, preferences)
+            positions = [car.position for car in first_sim.field]
+            user = first_sim.user_car
+
+            assert first_result == second_result
+            assert first_decisions == second_decisions
+            assert first_result.scheduled_laps == int(first_sim.config.scheduled_laps.value)
+            assert len(first_result.final_order) == len(set(first_result.final_order)) == len(first_sim.field)
+            assert positions == list(range(1, len(first_sim.field) + 1))
+            assert len(first_result.stage_results) == len(first_sim.config.stage_ends)
+            assert all(car.fuel.remaining_laps >= 0 for car in first_sim.field)
+            assert user.tire.age_laps <= first_sim.lap
+            assert second_sim.user_car.fuel.remaining_laps == user.fuel.remaining_laps
+            assert second_sim.user_car.tire.age_laps == user.tire.age_laps

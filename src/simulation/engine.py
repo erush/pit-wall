@@ -62,6 +62,7 @@ class RaceSimulation:
         if self.pending_decision is not None:
             return self.pending_decision
         while self.phase != RacePhase.FINISHED:
+            self._enter_stage_break_if_due()
             if self._human_decision_needed():
                 decision = self._build_decision()
                 self.pending_decision = decision
@@ -84,6 +85,7 @@ class RaceSimulation:
         self.start()
         while self.phase != RacePhase.FINISHED:
             if user_policy_auto:
+                self._enter_stage_break_if_due()
                 action = None
                 if self._human_decision_needed():
                     action = choose_strategy_action(self.user_car, self.config, self.phase, self.lap, self._recent_pitters(3), self.rng)
@@ -98,26 +100,7 @@ class RaceSimulation:
         return self.result()
 
     def _advance_one_lap(self, user_action: StrategyAction | None) -> None:
-        if self.lap in self.stage_break_laps and not self._stage_result_recorded_for_lap(self.lap):
-            stage_result = self._record_stage_result()
-            self.phase = RacePhase.STAGE_BREAK
-            self.caution_remaining = int(self.config.caution_laps.value)
-            self.events.append(
-                RaceEvent(
-                    "StageEnded",
-                    self.lap,
-                    (
-                        f"Stage {stage_result.stage_number} complete. Winner {stage_result.winner_car_id}. "
-                        f"You finished P{stage_result.user_position}."
-                    ),
-                    stage_result.winner_car_id,
-                    {
-                        "stage_number": stage_result.stage_number,
-                        "user_position": stage_result.user_position,
-                    },
-                )
-            )
-            self._bunch_field()
+        self._enter_stage_break_if_due()
 
         self._apply_strategy(user_action)
         if self.phase == RacePhase.GREEN:
@@ -252,6 +235,29 @@ class RaceSimulation:
         self.caution_count += 1
         self._bunch_field()
         self.events.append(RaceEvent("CautionStarted", self.lap, message))
+
+    def _enter_stage_break_if_due(self) -> None:
+        if self.lap not in self.stage_break_laps or self._stage_result_recorded_for_lap(self.lap):
+            return
+        stage_result = self._record_stage_result()
+        self.phase = RacePhase.STAGE_BREAK
+        self.caution_remaining = int(self.config.caution_laps.value)
+        self.events.append(
+            RaceEvent(
+                "StageEnded",
+                self.lap,
+                (
+                    f"Stage {stage_result.stage_number} complete. Winner {stage_result.winner_car_id}. "
+                    f"You finished P{stage_result.user_position}."
+                ),
+                stage_result.winner_car_id,
+                {
+                    "stage_number": stage_result.stage_number,
+                    "user_position": stage_result.user_position,
+                },
+            )
+        )
+        self._bunch_field()
 
     def _bunch_field(self) -> None:
         self._sort_order()

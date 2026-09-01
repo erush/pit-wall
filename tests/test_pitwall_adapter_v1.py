@@ -325,7 +325,7 @@ def test_darlington_stage_results_and_stage_break_decisions_are_preserved():
     stages = result.stage_results
     stage_events = [event for event in session.simulation.events if event.event_type == "StageEnded"]
 
-    assert stage_break_decisions == [(116, (1,)), (231, (1, 2))]
+    assert stage_break_decisions == [(115, (1,)), (230, (1, 2))]
     assert [stage.stage_number for stage in stages] == [1, 2]
     assert [stage.completion_lap for stage in stages] == [115, 230]
     assert len({stage.stage_number for stage in stages}) == 2
@@ -334,6 +334,31 @@ def test_darlington_stage_results_and_stage_break_decisions_are_preserved():
     assert len(stage_events) == 2
     assert "Stage 1 complete" in stage_events[0].message
     assert "Stage 2 complete" in stage_events[1].message
+
+
+def test_exact_stage_boundary_decision_uses_visible_stage_break_context():
+    adapter = PitWallAdapter()
+    session = adapter.create_race(seed=1847, control_mode="CO_CREW_CHIEF", track_id="trk_watkins_glen_international")
+
+    while True:
+        decision = adapter.advance_to_next_decision(session.session_id, actor="HUMAN")
+        assert not isinstance(decision, RaceFinishedResponse)
+        if decision.lap == session.config.stage_ends[0]:
+            break
+        committed = adapter.commit_strategy(session.session_id, "STAY_OUT", decision_id=decision.decision_id, actor="HUMAN")
+        assert committed.accepted
+
+    state = adapter.get_race_state(session.session_id)
+    assert decision.race_context == "STAGE_BREAK"
+    assert state.race_status == "STAGE_BREAK"
+    assert [stage.stage_number for stage in state.completed_stages] == [1]
+    assert "SHORT_PIT" not in [option.action for option in decision.available_actions if option.eligible]
+
+    committed = adapter.commit_strategy(session.session_id, "PIT_4_TIRES", decision_id=decision.decision_id, actor="HUMAN")
+
+    assert committed.accepted
+    assert committed.decision.position_before == decision.position
+    assert session.simulation.user_car.pit_stops[-1].lap == session.config.stage_ends[0]
 
 
 def test_race_intelligence_context_is_deterministic_read_only_and_observable():
